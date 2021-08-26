@@ -410,6 +410,7 @@ public class JournalStateMachine extends BaseStateMachine {
         applyEntry(e);
       }
     } else if (entry.getSequenceNumber() < 0) {
+      LOG.debug("Detected leader change with index: %d", entry.getSequenceNumber());
       // Negative sequence numbers indicate special entries used to indicate that a new primary is
       // starting to serve.
       mLastPrimaryStartSequenceNumber = entry.getSequenceNumber();

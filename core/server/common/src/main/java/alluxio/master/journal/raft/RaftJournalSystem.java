@@ -389,6 +389,12 @@ public class RaftJournalSystem extends AbstractJournalSystem {
     RaftServerConfigKeys.LeaderElection.setLeaderStepDownWaitTime(properties,
         TimeDuration.valueOf(Long.MAX_VALUE, TimeUnit.MILLISECONDS));
 
+    /*
+     * Soft disable RaftServer's internal retry cache.
+     */
+    // RaftServerConfigKeys.RetryCache.setExpiryTime(properties,
+        // TimeDuration.valueOf(0, TimeUnit.MILLISECONDS));
+
     long messageSize = ServerConfiguration.global().getBytes(
         PropertyKey.MASTER_EMBEDDED_JOURNAL_TRANSPORT_MAX_INBOUND_MESSAGE_SIZE);
     GrpcConfigKeys.setMessageSizeMax(properties,
@@ -454,6 +460,7 @@ public class RaftJournalSystem extends AbstractJournalSystem {
 
   @Override
   public synchronized void gainPrimacy() {
+    LOG.info("Raft journal transitioning to primary.");
     mSnapshotAllowed.set(false);
     LocalFirstRaftClient client = new LocalFirstRaftClient(mServer, this::createClient,
         mRawClientId, ServerConfiguration.global());
@@ -483,10 +490,12 @@ public class RaftJournalSystem extends AbstractJournalSystem {
     mAsyncJournalWriter
         .set(new AsyncJournalWriter(mRaftJournalWriter, () -> getJournalSinks(null)));
     mTransferLeaderAllowed.set(true);
+    LOG.info("Raft journal transitioned to primary.");
   }
 
   @Override
   public synchronized void losePrimacy() {
+    LOG.info("Raft journal transitioning to secondary.");
     if (mServer.getLifeCycleState() != LifeCycle.State.RUNNING) {
       // Avoid duplicate shut down Ratis server
       return;
@@ -527,7 +536,7 @@ public class RaftJournalSystem extends AbstractJournalSystem {
           mConf.getClusterAddresses()), e);
     }
 
-    LOG.info("Raft server successfully restarted");
+    LOG.info("Raft journal transitioned to secondary.");
   }
 
   @Override
@@ -672,7 +681,7 @@ public class RaftJournalSystem extends AbstractJournalSystem {
       try {
         CompletableFuture<RaftClientReply> future = client.sendAsync(
             toRaftMessage(JournalEntry.newBuilder().setSequenceNumber(gainPrimacySN).build()),
-            TimeDuration.valueOf(5, TimeUnit.SECONDS));
+            TimeDuration.valueOf(5, TimeUnit.SECONDS), true);
         RaftClientReply reply = future.get(5, TimeUnit.SECONDS);
         ex = reply.getException();
       } catch (TimeoutException | ExecutionException | IOException e) {

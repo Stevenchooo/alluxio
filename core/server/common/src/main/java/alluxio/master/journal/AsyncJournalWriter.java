@@ -53,6 +53,7 @@ import javax.annotation.concurrent.ThreadSafe;
 @ThreadSafe
 @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED")
 public final class AsyncJournalWriter {
+  private static final Logger LOG = LoggerFactory.getLogger(AsyncJournalWriter.class);
   private static final Logger SAMPLING_LOG =
       new SamplingLogger(LoggerFactory.getLogger(AsyncJournalWriter.class),
           30L * Constants.SECOND_MS);
@@ -236,6 +237,7 @@ public final class AsyncJournalWriter {
 
   @VisibleForTesting
   protected void stop() {
+    LOG.debug("Stopping async writer.");
     // Set termination flag.
     mStopFlushing = true;
     // Give a permit for flush thread to run, in case it was blocked on permit.
@@ -244,6 +246,7 @@ public final class AsyncJournalWriter {
     try {
       mFlushThread.join();
     } catch (InterruptedException ie) {
+      LOG.debug("Async-writer#stop interrupted.");
       Thread.currentThread().interrupt();
       return;
     } finally {
@@ -251,6 +254,7 @@ public final class AsyncJournalWriter {
       // Try to reacquire the permit.
       mFlushSemaphore.tryAcquire();
     }
+    LOG.debug("Stopped async writer.");
   }
 
   @VisibleForTesting
@@ -339,7 +343,7 @@ public final class AsyncJournalWriter {
       } catch (IOException | JournalClosedException exc) {
         // Add the error logging here since the actual flush error may be overwritten
         // by the future meaningless ratis.protocol.AlreadyClosedException
-        SAMPLING_LOG.warn("Failed to flush journal entry: " + exc.getMessage(), exc);
+        LOG.warn("Failed to flush journal entry: " + exc.getMessage(), exc);
         Metrics.JOURNAL_FLUSH_FAILURE.inc();
         // Release only tickets that have been flushed. Fail the rest.
         Iterator<FlushTicket> ticketIterator = mTicketSet.iterator();

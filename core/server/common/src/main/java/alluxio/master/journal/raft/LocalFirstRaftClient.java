@@ -81,6 +81,23 @@ public class LocalFirstRaftClient implements Closeable {
     }
   }
 
+  /**
+   * asd.
+   * @param message asd
+   * @param timeout asd
+   * @param useLocalServer asd
+   * @return asd
+   * @throws IOException asd
+   */
+  public CompletableFuture<RaftClientReply> sendAsync(Message message, TimeDuration timeout,
+      boolean useLocalServer) throws IOException {
+    if (useLocalServer) {
+      return sendLocalRequest(message, timeout);
+    } else {
+      return sendRemoteRequest(message);
+    }
+  }
+
   private CompletableFuture<RaftClientReply> sendLocalRequest(Message message,
       TimeDuration timeout) throws IOException {
     LOG.trace("Sending local message {}", message);

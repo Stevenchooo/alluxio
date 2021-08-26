@@ -21,6 +21,7 @@ import alluxio.util.FormatUtils;
 import com.google.common.base.Preconditions;
 import org.apache.ratis.protocol.Message;
 import org.apache.ratis.protocol.RaftClientReply;
+import org.apache.ratis.protocol.exceptions.NotLeaderException;
 import org.apache.ratis.util.TimeDuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,7 +63,7 @@ public class RaftJournalWriter implements JournalWriter {
    */
   public RaftJournalWriter(long nextSequenceNumberToWrite,
       LocalFirstRaftClient client) {
-    LOG.debug("Journal writer created starting at SN#{}", nextSequenceNumberToWrite);
+    LOG.debug("Journal writer created starting at SN#{}. {}", nextSequenceNumberToWrite, this);
     mNextSequenceNumberToWrite = new AtomicLong(nextSequenceNumberToWrite);
     mLastSubmittedSequenceNumber = new AtomicLong(-1);
     mLastCommittedSequenceNumber = new AtomicLong(-1);
@@ -86,6 +87,7 @@ public class RaftJournalWriter implements JournalWriter {
     Preconditions.checkState(entry.getAllFields().size() <= 1,
         "Raft journal entries should never set multiple fields, but found %s", entry);
     if (mCurrentJournalEntrySize.get() > mFlushBatchBytes) {
+      LOG.trace("Flushing as part of a write.");
       flush();
     }
     if (mJournalEntryBuilder == null) {
@@ -118,14 +120,20 @@ public class RaftJournalWriter implements JournalWriter {
         JournalEntry entry = mJournalEntryBuilder.build();
         Message message = RaftJournalSystem.toRaftMessage(entry);
         mLastSubmittedSequenceNumber.set(flushSN);
-        LOG.trace("Flushing entry {} ({})", entry, message);
+        LOG.trace("Flushing batch-entry: {}", entry);
         RaftClientReply reply = mClient
             .sendAsync(message, TimeDuration.valueOf(mWriteTimeoutMs, TimeUnit.MILLISECONDS))
             .get(mWriteTimeoutMs, TimeUnit.MILLISECONDS);
-        mLastCommittedSequenceNumber.set(flushSN);
         if (reply.getException() != null) {
+          if (reply.getException() instanceof NotLeaderException) {
+            LOG.trace("Received NotLeaderException. Closing itself.");
+            mJournalEntryBuilder = null;
+            close();
+          }
           throw reply.getException();
         }
+        mLastCommittedSequenceNumber.set(flushSN);
+        LOG.trace("Flushed upto sn: {}, by:{}", mLastCommittedSequenceNumber, this);
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         throw new IOException(e);
@@ -135,6 +143,9 @@ public class RaftJournalWriter implements JournalWriter {
         throw new IOException(String.format(
             "Timed out after waiting %s milliseconds for journal entries to be processed",
             mWriteTimeoutMs), e);
+      } catch (RuntimeException re) {
+        LOG.error("Unexpected runtime exception while flushing to raft: {}", re.toString());
+        throw re;
       }
       mJournalEntryBuilder = null;
     }
@@ -146,8 +157,9 @@ public class RaftJournalWriter implements JournalWriter {
       return;
     }
     mClosed = true;
-    LOG.info("Closing journal writer. Last sequence numbers written/submitted/committed: {}/{}/{}",
-        mNextSequenceNumberToWrite.get() - 1, mLastSubmittedSequenceNumber.get(),
+    LOG.info(
+        "Closing journal writer:{}. Last sequence numbers written/submitted/committed: {}/{}/{}",
+        this, mNextSequenceNumberToWrite.get() - 1, mLastSubmittedSequenceNumber.get(),
         mLastCommittedSequenceNumber.get());
     closeClient();
   }
